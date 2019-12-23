@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <title>Hello!</title>
+    <meta charset="utf-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    
+    <!-- import the webpage's stylesheet -->
+    <link rel="stylesheet" href="/style.css">
+    
+    <!-- import the webpage's javascript file -->
+    <script src="https://threejs.org/build/three.min.js"></script>
+    <script src="https://threejs.org/examples/js/controls/OrbitControls.js"></script>
+    <script src="//cdn.rawgit.com/mrdoob/three.js/master/examples/js/loaders/GLTFLoader.js"></script>
+    <script src="https://rawcdn.githack.com/mrdoob/three.js/master/examples/js/utils/BufferGeometryUtils.js"></script>
+    <script src="https://preview.babylonjs.com/recast.js"></script>
+    <script src="./recast-ext.js"></script>
+    <script src="https://s.cdpn.io/24025/ammo.small_1.js"></script>
+    <script src="./recast-ext.js"></script>
+    <script src="./AmmoMesh.js"></script>
+    <script src="./AmmoUtils.js"></script>
+    <script src="https://stemkoski.github.io/Three.js/js/DAT.GUI.min.js"></script>
+    
+  </head>  
+  <body>
+   <script>
+     
+  var container, renderer, scene, camera, fpsCamera, player, psd_player, controls;
+  let navigationPlugin, physicsWorld;
+  let enableNav = true, enablePhysics = false;
+  const VELOCITY = 20, GRAVITY = -600;
+  let clock = new THREE.Clock()
+  initPhysicsWorld();
+  init();
+  animate();
+  
+    
+  function init() {
+
+    // renderer
+    renderer = new THREE.WebGLRenderer({
+        antialias: false
+    });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setClearColor(0xccccff);
+    container = document.createElement('div');
+    document.body.appendChild(container);
+    container.appendChild(renderer.domElement);
+
+    // scene
+    scene = new THREE.Scene();
+ 
+    // camera
+    camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 1, 10000);
+    camera.position.set(0, 200, 800);
+    camera.lookAt(scene.position);
+    camera.eulerOrder = "YXZ";
+    
+
+    fpsCamera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 1, 10000);
+    controls = new THREE.OrbitControls(camera, renderer.domElement);
+
+    // light    
+    var light = new THREE.PointLight(0xffffff);
+    light.position.set(100, 250, 250);
+    scene.add(light);
+
+    var boxGeometry = new THREE.SphereGeometry(10, 10, 10);
+    var sphereMaterial = new THREE.MeshLambertMaterial({
+        color: 0xff0000
+    });
+    player = new THREE.Mesh(boxGeometry);
+    player.position.y = 15
+    scene.add(player);
+
+    psd_player = player.clone();/*player mesh, you can parent this mesh to any model*/
+    scene.add(psd_player)
+    
+    
+    
+    fpsCamera.parent = player
+    var cameraOffset = player.position.clone()
+    fpsCamera.position.x = cameraOffset.x;
+    fpsCamera.position.y = cameraOffset.y+10;
+    fpsCamera.position.z = cameraOffset.z+65;
+
+    player.add(fpsCamera)
+    player.eulerOrder = "YXZ";
+    
+   
+  
+    
+    
+    addArbitaryGeometry(player, 'box')
+  
+    
+    var loader = new THREE.GLTFLoader();
+    var url = "https://cdn.glitch.com/31112f90-0b81-4861-940b-2473466ee334%2Flevelpvp.glb?v=1577060673176"
+
+       loader.load(url, (data) => {
+              gltf = data;
+            var object;
+            if (gltf.scene !== undefined) {
+                object = gltf.scene; // default scene
+            } else if (gltf.scenes.length > 0) {
+                object = gltf.scenes[0]; // other scene
+            }
+        scene.add(object)
+       
+       
+        data.scene.traverse((child) => {
+    
+            if (child instanceof THREE.Mesh) {
+              
+                /*build navmesh*/
+              var navmeshParameters = {
+                    cs: 0.9,
+                    ch: 0.9,
+                    walkableSlopeAngle: 35,
+                    walkableHeight: 2,
+                    walkableClimb: 2,
+                    walkableRadius: 10,
+                    maxEdgeLen: 12.,
+                    maxSimplificationError: 1.3,
+                    minRegionArea: 8,
+                    mergeRegionArea: 2,
+                    maxVertsPerPoly: 6,
+                    detailSampleDist: 6,
+                    detailSampleMaxError: .1,
+                    };
+
+               navigationPlugin = new THREE.RecastJSPlugin();
+               navigationPlugin.createNavMesh([child], navmeshParameters)
+
+
+               var navMesh = navigationPlugin.createDebugNavMesh(scene)
+               scene.add(navMesh)
+               navMesh.material = new THREE.MeshBasicMaterial({color:"green", opacity: .5, transparent: true, side: THREE.DoubleSide})
+                
+               player.position = navigationPlugin.getClosestPoint(new THREE.Vector3(0, 10, 0))
+               
+               addArbitaryGeometry(child, 'concave')
+              
+              
+            }
+          })
+       })
+  
+        /*GUI*/
+        var gui = new dat.GUI();
+
+        var parameters = 
+        {
+          c: function() {},
+          d: false, // boolean (checkbox)
+          e: false,
+        };
+        gui.add( parameters, 'c' ).name('select engine');
+        gui.add( parameters, 'd' ).name('Use physics').onChange(function(){
+         enableNav = false
+         enablePhysics = true
+        });
+	      gui.add( parameters, 'e' ).name('Use navigation').onChange(function(){
+         enableNav = true
+         enablePhysics = false
+        });
+    
+  
+    window.addEventListener('resize', onWindowResize, false);
+}
+function initPhysicsWorld(){/* init physics */
+    const collisionConfiguration = new Ammo.btDefaultCollisionConfiguration();
+    const dispatcher = new Ammo.btCollisionDispatcher(collisionConfiguration);
+    const overlappingPairCache = new Ammo.btDbvtBroadphase();
+    const solver = new Ammo.btSequentialImpulseConstraintSolver();
+    physicsWorld = new Ammo.btDiscreteDynamicsWorld(dispatcher, overlappingPairCache, solver, collisionConfiguration);
+    physicsWorld.setGravity(new Ammo.btVector3(0, GRAVITY, 0));
+};
+ 
+function addArbitaryGeometry(mesh, type){
+         var arbitaryMesh = new AmmoMesh(
+          mesh, type
+        );
+    
+        physicsWorld.addRigidBody( arbitaryMesh.rigidBody );    
+}
+     
+function navigation_walk(mesh){ /* constraint camera to navmesh */
+  mesh.position.copy(navigationPlugin.moveAlong(mesh.position, navigationPlugin.getClosestPoint(mesh.position)))
+}
+function onWindowResize(event) {
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+}
+
+function animate() {
+    controls.update();
+  if(enableNav){
+    if(navigationPlugin){// Basic FPS camera control
+      navigation_walk(player)
+      psd_player.position.copy(player.position)
+      player.translateOnAxis(new THREE.Vector3(0, 0, 1), -.4)
+    }
+  }
+  if(enablePhysics){
+     /* update physics */
+    physicsWorld.stepSimulation(clock.getDelta(), 1); 
+    player.updatePhysics()
+    player.rigidBody.setLinearVelocity(new Ammo.btVector3(-Math.sin(player.rotation.y)*VELOCITY, 0, -Math.cos(player.rotation.y)*VELOCITY))
+  }
+  
+   
+  
+    psd_player.position.copy(player.position)
+    player.rotation.y = camera.rotation.y
+  
+    renderer.render(scene, fpsCamera);
+    requestAnimationFrame(animate);
+}
+    </script>
+  </body>
+</html>
